@@ -21,7 +21,7 @@ module.exports = {
   ],
   type: 1,
   parent: 'giveaway',
-  run: async (lb, bot, db, Discord) => {
+  async run (lb, bot, db, Discord) {
     const id = lb.options.getInteger("id");
     const force = lb.options.getBoolean("force") ?? true;
 
