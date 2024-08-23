@@ -6,85 +6,114 @@ module.exports = {
       type: "INTEGER",
       name: "id",
       min_value: 1,
-      max_length: 2,
-      description: "The id of the giveaway",
+      description: "The ID of the giveaway",
       required: true
     },
     {
       type: "BOOLEAN",
       name: "force",
-      description: "Wheather to terminate the giveaway or just pick a winnner."
+      description: "Whether to force end the giveaway or just pick a winner"
     }
   ],
   type: 1,
   parent: 'giveaway',
- async run(lb, bot, db, Discord) {
-    let conn = await db.getConnection();
+  run: async (lb, bot, db, Discord) => {
+    const id = lb.options.getInteger("id");
+    const force = lb.options.getBoolean("force") ?? true;
+
     try {
-    let force = true;
-    if(!lb.options.getBoolean("force") || lb.options.getBoolean("force") === false) force = false;
-console.log(force)
-    let [g] = await conn.query("SELECT * FROM giveaways WHERE id = ? AND active = 1", [lb.options.getInteger("id")]);
-    if(!g) return lb.reply({content: "No data about this giveaway, do /giveaways list to get the giveaway id, it may also mean that the giveaway isn't active anymore.", ephemeral: true});
-lb.reply({content: "Ended the giveaway with the id `" + g.id + "`", ephemeral: true});
-    // End 'giveaway'
-    if(force === false) {
-          let winner;
-          let arr = g.participants;
-          let n = Math.min(Number(g.winners), arr.length);
-          let shuffled = arr.slice().sort(() => 0.5 - Math.random());
+      const giveaway = await getGiveaway(db, id);
 
-          if (arr.length <= Number(g.winners)) {
-            winner = "Not enough participants";
-          } else {
-            winner = shuffled.slice(0, n);
-          }
-          
-           let participantsButton = new Discord.MessageActionRow().addComponents(
-              new Discord.MessageButton()
-                .setLabel(`${arr.length}`)
-                .setStyle("SECONDARY")
-                .setEmoji("🎉")
-            .setCustomId("diasbled")
-                .setDisabled(true)
-            );
+      if (!giveaway) {
+        return lb.reply({
+          content: "Giveaway not found or inactive. Check the ID with /giveaways list.",
+          ephemeral: true
+        });
+      }
 
-          let msg = await bot.channels.cache
-            .get(g.channelid)
-            .messages.fetch(g.msgid);
-console.log(winner)
-          if (winner === "Not enough participants") {
-            await msg.edit({ content: winner, embeds: [], components: [participantsButton] });
-          await conn.query("UPDATE giveaways SET active = 0 WHERE id = ?", [g.id]);
-          } else {
-            let winEmbed = new Discord.MessageEmbed()
-            .setTitle(g.name)
-            .setColor(bot.config?.color || "BLUE")
-            .setTimestamp()
-            .setDescription("**This givaway has ended, the winners mentioned should reveice their prizes shortly**");
+      if (force) {
+        await endGiveaway(db, bot, giveaway);
+      } else {
+        await pickWinner(db, bot, giveaway);
+      }
 
-            await msg.edit({
-              content: `${winner.map(b => `<@${b}>`).join(", ")}`,
-              embeds: [winEmbed],
-              components: [participantsButton]
-            });
-          await conn.query("UPDATE giveaways SET active = 0 WHERE id = ?", [g.id]);
-
-          console.log("message edited");
-          }
-    } else {
-      let msg =  await bot.channels.cache
-            .get(g.channelid)
-            .messages.fetch(g.msgid);
-
-      await msg.delete()
-        //await conn.query("UPDATE giveaways SET active = 0 WHERE id = ?", [g.id]);
-      await conn.query("DELETE FROM giveaways WHERE id = ?", [g.id]);
-    }
-    } catch(err) {
-      console.log(err);
-    } finally {
-    await conn.release()
+      lb.reply({ content: `Processed giveaway ID \`${id}\`.`, ephemeral: true });
+    } catch (error) {
+      console.error("Error:", error);
     }
   }
 };
+
+async function getGiveaway(db, id) {
+  const conn = await db.getConnection();
+  try {
+    const [giveaway] = await conn.query("SELECT * FROM giveaways WHERE id = ? AND active = 1", [id]);
+    return giveaway;
+  } finally {
+    await conn.release();
+  }
+}
+
+async function endGiveaway(db, bot, giveaway) {
+  const conn = await db.getConnection();
+  try {
+    const channel = bot.channels.cache.get(giveaway.channelid);
+    const message = await channel.messages.fetch(giveaway.msgid);
+
+    if (giveaway.participants.length === 0) {
+      await message.edit({ content: "No participants", components: [
+        new Discord.MessageActionRow()
+          .addComponents(
+            new Discord.MessageButton()
+              .setLabel(`${giveaway.participants.length}`)
+              .setStyle("SECONDARY")
+              .setEmoji("🎉")
+              .setCustomId("disabled")
+              .setDisabled(true)
+          )
+      ]});
+      await conn.query("UPDATE giveaways SET active = 0 WHERE id = ?", [giveaway.id]);
+    } else {
+      const winners = getRandomWinners(giveaway.participants, giveaway.winners);
+      const mentions = winners.map(w => `<@${w}>`).join(", ");
+
+      await message.edit({
+        content: mentions,
+        embeds: [new Discord.MessageEmbed()
+          .setTitle(giveaway.name)
+          .setColor("BLUE")
+          .setTimestamp()
+          .setDescription("This giveaway has ended. Winners have been notified.")
+        ],
+        components: [
+          new Discord.MessageActionRow()
+            .addComponents(
+              new Discord.MessageButton()
+                .setLabel(`${giveaway.participants.length}`)
+                .setStyle("SECONDARY")
+                .setEmoji("🎉")
+                .setCustomId("disabled")
+                .setDisabled(true)
+            )
+        ]
+      });
+
+      await conn.query("UPDATE giveaways SET active = 0 WHERE id = ?", [giveaway.id]);
+    }
+  } finally {
+    await conn.release();
+  }
+}
+
+async function pickWinner(db, bot, giveaway) {
+  const channel = bot.channels.cache.get(giveaway.channelid);
+  const message = await channel.messages.fetch(giveaway.msgid);
+
+  await message.delete();
+  await db.query("DELETE FROM giveaways WHERE id = ?", [giveaway.id]);
+}
+
+function getRandomWinners(participants, count) {
+  const shuffled = participants.slice().sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, Math.min(count, shuffled.length));
+}
