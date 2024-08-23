@@ -1,6 +1,10 @@
 module.exports = {
   name: 'end',
   description: 'End a giveaway',
+  permissions: {
+    user: ["ADMINSTARTOR"],
+    bot: []
+  },
   options: [
     {
       type: "INTEGER",
