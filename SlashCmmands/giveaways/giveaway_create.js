@@ -40,50 +40,77 @@ module.exports = {
   ],
   async run(lb, bot, db) {
     const durationStr = lb.options.getString("duration");
-    if (!/d$|h$|m$|w$|mo$|s$/.test(durationStr)) {
+
+    if (!isValidDuration(durationStr)) {
       return lb.reply({ content: "Invalid duration. Use formats like: `1d`, `2w`, `3mo`, etc.", ephemeral: true });
     }
 
-    const durationSec = Math.floor(Date.now() / 1000) + Math.floor(ms(durationStr) / 1000);
-
-    const conn = await db.getConnection();
+    const durationSec = calculateDuration(durationStr);
+    const giveawayDetails = {
+      name: lb.options.getString("name"),
+      winners: lb.options.getInteger("winners"),
+      durationSec,
+      channelId: lb.channel.id
+    };
 
     try {
-      const result = await conn.query(
-        "INSERT INTO giveaways (name, winners, endsat, participants, msgid, channelid) VALUES (?, ?, ?, ?, ?, ?)",
-        [lb.options.getString("name"), lb.options.getInteger("winners"), durationSec, "[]", null, lb.channel.id]
-      );
+      const giveawayId = await saveGiveaway(db, giveawayDetails);
+      const giveawayMessage = await sendGiveawayMessage(lb, bot, giveawayDetails, giveawayId);
+      await updateGiveawayMessageId(db, giveawayId, giveawayMessage.id);
 
-      let gvEmbed = new Discord.MessageEmbed()
-        .setTitle("🎉 " + lb.options.getString("name") + " 🎉")
-        .setColor(bot.config?.color || "BLURPLE")
-        .setFooter(`${lb.options.getInteger("winners")} winner(s)`)
-        .setDescription("Click on the button with the 🎉 emoji to participate in this giveaway!\nEnds " + `<t:${durationSec}:R>`)
-        .setTimestamp();
-
-      let gvButton = new Discord.MessageActionRow()
-        .addComponents(
-          new Discord.MessageButton()
-            .setLabel("0")
-            .setStyle("SECONDARY")
-            .setEmoji("🎉")
-            .setCustomId("btn_" + result.insertId)
-        );
-
-      let msg = await lb.channel.send({ embeds: [gvEmbed], content: "@everyone A new giveaway!", components: [gvButton] });
-
-      await conn.query(
-        "UPDATE giveaways SET msgid = ? WHERE id = ?",
-        [msg.id, result.insertId]
-      );
-
-      lb.reply({ content: `Giveaway created. Save this ID: **${result.insertId}**`, ephemeral: true });
-
+      lb.reply({ content: `Giveaway created. Save this ID: **${giveawayId}**`, ephemeral: true });
     } catch (error) {
       console.error("An error occurred:", error);
-    } finally {
-      await conn.release();
     }
   }
 };
 
+function isValidDuration(durationStr) {
+  return /d$|h$|m$|w$|mo$|s$/.test(durationStr);
+}
+
+function calculateDuration(durationStr) {
+  return Math.floor(Date.now() / 1000) + Math.floor(ms(durationStr) / 1000);
+}
+
+async function saveGiveaway(db, details) {
+  const conn = await db.getConnection();
+  try {
+    const result = await conn.query(
+      "INSERT INTO giveaways (name, winners, endsat, participants, msgid, channelid) VALUES (?, ?, ?, ?, ?, ?)",
+      [details.name, details.winners, details.durationSec, "[]", null, details.channelId]
+    );
+    return result.insertId;
+  } finally {
+    await conn.release();
+  }
+}
+
+async function sendGiveawayMessage(lb, bot, details, giveawayId) {
+  const gvEmbed = new Discord.MessageEmbed()
+    .setTitle("🎉 " + details.name + " 🎉")
+    .setColor(bot.config?.color || "BLURPLE")
+    .setFooter(`${details.winners} winner(s)`)
+    .setDescription("Click on the button with the 🎉 emoji to participate in this giveaway!\nEnds " + `<t:${details.durationSec}:R>`)
+    .setTimestamp();
+
+  const gvButton = new Discord.MessageActionRow()
+    .addComponents(
+      new Discord.MessageButton()
+        .setLabel("0")
+        .setStyle("SECONDARY")
+        .setEmoji("🎉")
+        .setCustomId("btn_" + giveawayId)
+    );
+
+  return lb.channel.send({ embeds: [gvEmbed], content: "@everyone A new giveaway!", components: [gvButton] });
+}
+
+async function updateGiveawayMessageId(db, giveawayId, messageId) {
+  const conn = await db.getConnection();
+  try {
+    await conn.query("UPDATE giveaways SET msgid = ? WHERE id = ?", [messageId, giveawayId]);
+  } finally {
+    await conn.release();
+  }
+}
