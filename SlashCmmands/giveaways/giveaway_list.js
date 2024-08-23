@@ -6,7 +6,7 @@ module.exports = {
   description: 'Lists all giveaways',
   permissions: {
     bot: [],
-    user: []
+    user: ["ADMINSTARTOR"]
   },
   cooldown: '5s',
   catg: '',
