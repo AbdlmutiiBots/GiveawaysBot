@@ -4,7 +4,7 @@ const db = require("../db.js");
 module.exports = {
   name: 'interactionCreate',
   once: false,
-  run: async (i) => {
+  async run (i) {
     if (i.isButton() && i.customId.startsWith("btn_")) {
       const conn = await db.getConnection();
       try {
