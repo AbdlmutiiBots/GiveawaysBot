@@ -18,7 +18,7 @@ module.exports = {
   ],
   type: 1,
   parent: 'giveaway',
- async run(lb, bot, db, Discord) => {
+ async run(lb, bot, db, Discord) {
     let conn = await db.getConnection();
     try {
     let force = true;
