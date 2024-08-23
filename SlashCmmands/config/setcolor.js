@@ -5,7 +5,7 @@ module.exports = {
   description: 'Set the embed colors',
   permissions: {
     bot: [],
-    user: []
+    user: ["ADMINSTARTOR"]
   },
   cooldown: '5s',
   catg: '',
